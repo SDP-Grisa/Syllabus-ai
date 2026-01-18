@@ -12,12 +12,24 @@ export async function uploadPDF(file) {
     return res.json();
 }
 
-export async function askQuestion(question) {
-    const params = new URLSearchParams({ question });
+export async function askQuestion(question, imageFile = null) {
+    const formData = new FormData();
+    formData.append("question", question);
 
-    const res = await fetch(`${BASE_URL}/ask?${params}`, {
-        method: "POST"
+    if (imageFile) {
+        formData.append("image", imageFile);
+    }
+
+    const res = await fetch(`${BASE_URL}/ask`, {
+        method: "POST",
+        body: formData
     });
+
+    if (!res.ok) {
+        throw new Error("Ask failed");
+    }
 
     return res.json();
 }
+
+

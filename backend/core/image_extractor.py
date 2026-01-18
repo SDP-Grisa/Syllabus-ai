@@ -5,135 +5,100 @@ import imagehash
 from io import BytesIO
 import math
 
-SEEN_IMAGE_HASHES = {}
-PAGE_IMAGE_COUNT = {}
+# -------------------------------
+# Global trackers
+# -------------------------------
+SEEN_IMAGE_HASHES = {}     # hash -> count
+PAGE_IMAGE_COUNT = {}     # page -> count
+PDF_IMAGE_HASHES = {}     # hash -> metadata
 
+
+# -------------------------------
+# Utility: image entropy
+# -------------------------------
 def image_entropy(img: Image.Image) -> float:
-    """
-    Measure visual complexity.
-    Low entropy = logos / flat patterns
-    """
     histogram = img.histogram()
     total = sum(histogram)
-    entropy = 0
+    entropy = 0.0
+
     for count in histogram:
         if count == 0:
             continue
         p = count / total
         entropy -= p * math.log2(p)
+
     return entropy
 
 
-# def extract_images_from_pdf(
-#     pdf_path: str,
-#     output_dir: str = "data/images",
-#     min_width: int = 200,
-#     min_height: int = 200,
-#     edge_margin_ratio: float = 0.15,
-#     entropy_threshold: float = 4.5,
-#     repeat_threshold: int = 3
-# ):
-#     os.makedirs(output_dir, exist_ok=True)
-#     doc = fitz.open(pdf_path)
-
-#     extracted = []
-
-#     for page_num in range(len(doc)):
-#         page = doc[page_num]
-#         page_width = page.rect.width
-#         page_height = page.rect.height
-
-#         images = page.get_images(full=True)
-
-#         for img_index, img in enumerate(images):
-#             xref = img[0]
-#             base_image = doc.extract_image(xref)
-
-#             image_bytes = base_image["image"]
-#             ext = base_image["ext"]
-
-#             # 🔹 Image position
-#             rects = page.get_image_rects(xref)
-#             if not rects:
-#                 continue
-
-#             rect = rects[0]
-#             x0, y0, x1, y1 = rect
-
-#             image = Image.open(BytesIO(image_bytes)).convert("RGB")
-#             width, height = image.size
-
-#             # 🚫 Size filter
-#             if width < min_width or height < min_height:
-#                 continue
-
-#             # 🚫 Edge filter (headers / footers / side logos)
-#             if (
-#                 y0 < page_height * edge_margin_ratio or
-#                 y1 > page_height * (1 - edge_margin_ratio) or
-#                 x0 < page_width * edge_margin_ratio or
-#                 x1 > page_width * (1 - edge_margin_ratio)
-#             ):
-#                 continue
-
-#             # 🚫 Aspect ratio filter (logos are wide & short)
-#             aspect_ratio = width / height
-#             if aspect_ratio > 4 or aspect_ratio < 0.25:
-#                 continue
-
-#             # 🚫 Low entropy images (logos, watermarks)
-#             entropy = image_entropy(image)
-#             if entropy < entropy_threshold:
-#                 continue
-
-#             # 🚫 Repetition detection
-#             img_hash = imagehash.phash(image)
-#             hash_key = str(img_hash)
-
-#             PAGE_IMAGE_COUNT[hash_key] = PAGE_IMAGE_COUNT.get(hash_key, 0) + 1
-#             if PAGE_IMAGE_COUNT[hash_key] >= repeat_threshold:
-#                 continue
-
-#             # ✅ SAVE image
-#             image_name = f"page_{page_num+1}_img_{img_index}.{ext}"
-#             image_path = os.path.join(output_dir, image_name)
-#             image.save(image_path)
-
-#             extracted.append({
-#                 "page": page_num + 1,
-#                 "path": image_path,
-#                 "width": width,
-#                 "height": height,
-#                 "entropy": round(entropy, 2)
-#             })
-
-#     return extracted
-
-
-import fitz  # PyMuPDF
-import os
-
+# -------------------------------
+# Main extractor
+# -------------------------------
 def extract_images_from_pdf(pdf_path: str):
+    global PDF_IMAGE_HASHES, SEEN_IMAGE_HASHES, PAGE_IMAGE_COUNT
+
+    PDF_IMAGE_HASHES.clear()
+    SEEN_IMAGE_HASHES.clear()
+    PAGE_IMAGE_COUNT.clear()
+
     images = []
-    doc = fitz.open(pdf_path)  # MUST be string path
+    doc = fitz.open(pdf_path)
 
     output_dir = "data/images"
     os.makedirs(output_dir, exist_ok=True)
 
+    # ---- Tunable thresholds ----
+    HASH_DISTANCE_THRESHOLD = 5      # similarity threshold
+    MIN_ENTROPY = 4.0                # logos usually < 3
+    MAX_IMAGES_PER_PAGE = 3          # avoid noisy pages
+
     for page_index in range(len(doc)):
         page = doc[page_index]
         image_list = page.get_images(full=True)
+        PAGE_IMAGE_COUNT[page_index] = 0
 
         for img_index, img in enumerate(image_list):
+            if PAGE_IMAGE_COUNT[page_index] >= MAX_IMAGES_PER_PAGE:
+                break
+
             xref = img[0]
             base_image = doc.extract_image(xref)
             image_bytes = base_image["image"]
             image_ext = base_image["ext"]
 
+            pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+            # 🧠 Skip low-entropy images (logos, watermarks)
+            entropy = image_entropy(pil_img)
+            if entropy < MIN_ENTROPY:
+                continue
+
+            img_hash = imagehash.phash(pil_img)
+
+            # 🔁 Duplicate detection
+            is_duplicate = False
+            for seen_hash in SEEN_IMAGE_HASHES:
+                if abs(img_hash - seen_hash) <= HASH_DISTANCE_THRESHOLD:
+                    SEEN_IMAGE_HASHES[seen_hash] += 1
+                    is_duplicate = True
+                    break
+
+            if is_duplicate:
+                continue
+
+            # ✅ Save image
             image_path = f"{output_dir}/page{page_index+1}_{img_index}.{image_ext}"
             with open(image_path, "wb") as f:
                 f.write(image_bytes)
 
             images.append(image_path)
+
+            # 🔑 Track hashes
+            SEEN_IMAGE_HASHES[img_hash] = 1
+            PAGE_IMAGE_COUNT[page_index] += 1
+
+            PDF_IMAGE_HASHES[str(img_hash)] = {
+                "page": page_index + 1,
+                "path": image_path
+            }
 
     return images
