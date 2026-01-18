@@ -1,0 +1,7 @@
+EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
+LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
+
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 50
+SIMILARITY_THRESHOLD = 0.55
+TOP_K = 4
