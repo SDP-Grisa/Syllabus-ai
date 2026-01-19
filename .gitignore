@@ -13,10 +13,10 @@ dist/
 # =========================
 backend/data/
 backend/data/**
-**/chroma/
-**/chroma/**
-*.bin
-chroma.sqlite3
+# **/chroma/
+# **/chroma/**
+# *.bin
+# chroma.sqlite3
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
