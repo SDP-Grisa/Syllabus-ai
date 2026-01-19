@@ -10,6 +10,7 @@ app = FastAPI(title="Multi-Modal Syllabus AI")
 # Enable CORS
 origins = [
     "http://localhost:5173",  # your frontend origin
+    "http://localhost:5174",
     # "http://localhost:3000",  # add other origins if needed
 ]
 

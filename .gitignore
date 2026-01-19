@@ -1,3 +1,25 @@
+# =========================
+# Frontend (React + Vite)
+# =========================
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+**/.vite/
+
+# =========================
+# Backend runtime data (DO NOT COMMIT)
+# =========================
+backend/data/
+backend/data/**
+data/
+**/data/
+**/chroma/
+**/chroma/**
+*.bin
+chroma.sqlite3
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
