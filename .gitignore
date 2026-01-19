@@ -13,8 +13,6 @@ dist/
 # =========================
 backend/data/
 backend/data/**
-data/
-**/data/
 **/chroma/
 **/chroma/**
 *.bin
