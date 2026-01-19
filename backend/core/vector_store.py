@@ -1,17 +1,25 @@
 # core/vector_store.py
+# core/vector_store.py
+import os
 import chromadb
+from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
-client = chromadb.Client(
-    chromadb.config.Settings(
-        persist_directory="data/chroma"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CHROMA_DIR = os.path.join(BASE_DIR, "data", "chroma")
+
+os.makedirs(CHROMA_DIR, exist_ok=True)
+
+client = chromadb.PersistentClient(
+    path=CHROMA_DIR,
+    settings=Settings(
+        anonymized_telemetry=False
     )
 )
 
 collection = client.get_or_create_collection(name="pdf_chunks")
 
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
-
 
 
 # import faiss

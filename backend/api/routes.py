@@ -5,7 +5,7 @@ import re
 from core import pdf_loader, chunking
 from core.llm import llm_query
 from core.image_extractor import extract_images_from_pdf, PDF_IMAGE_HASHES
-from core.vector_store import collection, embedder
+from core.vector_store import collection, embedder, client
 from PIL import Image
 import imagehash
 from io import BytesIO
@@ -70,25 +70,14 @@ def extract_text(value):
 
 
 def process_pdf(path: str):
-    if not isinstance(path, str):
-        raise TypeError(f"PDF path must be string, got {type(path)}")
-
     global current_pdf_chunks, current_pdf_images
 
     try:
-        # ===============================
-        # 🧹 CLEAR PREVIOUS VECTOR DATA
-        # ===============================
-        existing = collection.get()
-        if existing and existing.get("ids"):
-            collection.delete(ids=existing["ids"])
-            print(f"🧹 Cleared {len(existing['ids'])} old vectors")
-        else:
-            print("🧹 Vector DB already empty")
+        # 🧹 Recreate collection
+        client.delete_collection("pdf_chunks")
+        global collection
+        collection = client.get_or_create_collection("pdf_chunks")
 
-        # ===============================
-        # 📄 EXTRACT PDF TEXT
-        # ===============================
         raw_pages = pdf_loader.extract_pdf(path)
         all_chunks = []
 
@@ -106,16 +95,14 @@ def process_pdf(path: str):
                 })
 
         if not all_chunks:
-            raise ValueError("No text chunks extracted from PDF")
+            print("⚠️ No chunks found")
+            return
 
-        # ===============================
-        # 🧠 STORE IN VECTOR DB
-        # ===============================
         texts = [c["text"] for c in all_chunks]
-        embeddings = embedder.encode(texts, show_progress_bar=False).tolist()
+        embeddings = embedder.encode(texts).tolist()
 
         ids = [str(uuid.uuid4()) for _ in texts]
-        metadatas = [{"page": c["page"], "source": "current_pdf"} for c in all_chunks]
+        metadatas = [{"page": c["page"]} for c in all_chunks]
 
         collection.add(
             documents=texts,
@@ -124,34 +111,23 @@ def process_pdf(path: str):
             ids=ids
         )
 
-        # ===============================
-        # 🖼️ EXTRACT IMAGES
-        # ===============================
+        # 🖼️ Images
         images = extract_images_from_pdf(path)
-
         image_urls = [
             f"http://localhost:8000/static/images/{os.path.basename(img)}"
             for img in images
         ]
 
-        # ===============================
-        # 🧠 CACHE IN MEMORY (DEBUG + FALLBACK)
-        # ===============================
         current_pdf_chunks = all_chunks
         current_pdf_images = image_urls
 
-        # ===============================
-        # ✅ LOGGING
-        # ===============================
         print("✅ PDF processed successfully")
-        print(f"📦 Vector chunks stored: {len(texts)}")
+        print(f"📦 Vector chunks stored: {len(all_chunks)}")
         print(f"🖼️ Images extracted: {len(image_urls)}")
 
     except Exception as e:
         print(f"❌ Error processing PDF: {e}")
-        current_pdf_chunks = []
-        current_pdf_images = []
-        
+      
 
 def tokenize(text: str) -> set:
     """Basic tokenizer for overlap scoring."""
@@ -300,18 +276,21 @@ def is_image_from_pdf(uploaded_image_bytes: bytes, threshold=6):
 
 
 def retrieve_relevant_chunks(question: str, k: int = 5):
-    query_embedding = embedder.encode([question]).tolist()
+    query_embedding = embedder.encode(question).tolist()
 
     results = collection.query(
-        query_embeddings=query_embedding,
+        query_embeddings=[query_embedding],
         n_results=k
     )
+
+    if not results or not results.get("documents"):
+        return []
 
     chunks = []
     for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
         chunks.append({
             "text": doc,
-            "page": meta["page"]
+            "page": meta.get("page", "Unknown")
         })
 
     return chunks
@@ -323,14 +302,11 @@ async def ask_question(
     question: str = Form(...),
     image: UploadFile | None = File(None)
 ):
-    global current_pdf_chunks, current_pdf_images
-
     if collection.count() == 0:
         return JSONResponse(
             status_code=400,
             content={"error": "No PDF vectors found. Upload PDF first."}
         )
-
 
     try:
         matched_image = None
@@ -357,8 +333,8 @@ async def ask_question(
                     "sources": []
                 }
 
-        # 🔍 Vector search
-        relevant_chunks = retrieve_relevant_chunks(question)
+        # 🔍 Vector search (single source of truth)
+        relevant_chunks = retrieve_relevant_chunks(question, k=5)
 
         if not relevant_chunks:
             return {
@@ -379,7 +355,7 @@ async def ask_question(
             "images": current_pdf_images
         }
 
-        # 🎯 If image matched → only that image
+        # 🎯 If image matched → restrict images
         if matched_image:
             response["images"] = [
                 f"http://localhost:8000/static/images/{os.path.basename(matched_image['path'])}"
